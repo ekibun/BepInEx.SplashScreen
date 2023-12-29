@@ -285,7 +285,18 @@ namespace BepInEx.SplashScreen
                         _mainForm.FormBorderStyle = FormBorderStyle.None;
                         //_mainForm.BackColor = Color.White;
                         _mainForm.PerformLayout();
-                        NativeMethods.SetParent(_mainForm.Handle, gameProcess.MainWindowHandle);
+
+                        // Check for fullscreen
+                        long style = NativeMethods.GetWindowLong(gameProcess.MainWindowHandle, NativeMethods.GWL_STYLE);
+                        bool hasBorder = (style & NativeMethods.WS_BORDER) != 0;
+                        if(hasBorder)
+                        {
+                            NativeMethods.SetParent(_mainForm.Handle, gameProcess.MainWindowHandle);
+                        }
+                        else
+                        {
+                            NativeMethods.SetWindowLong(_mainForm.Handle, NativeMethods.GWL_HWNDPARENT, gameProcess.MainWindowHandle);
+                        }
                     }
                     _mainForm.Invalidate();
 
@@ -315,6 +326,12 @@ namespace BepInEx.SplashScreen
             public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
 
             [DllImport("user32.dll")]
+            public static extern long GetWindowLong(IntPtr hWnd, int nIndex);
+            
+            [DllImport("user32.dll")]
+            public static extern int SetWindowLong(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+            [DllImport("user32.dll")]
             [return: MarshalAs(UnmanagedType.Bool)]
             public static extern bool GetWindowRect(HandleRef hWnd, out RECT lpRect);
 
@@ -326,6 +343,10 @@ namespace BepInEx.SplashScreen
                 public int Right;       // x position of lower-right corner
                 public int Bottom;      // y position of lower-right corner
             }
+
+            public const int GWL_HWNDPARENT = -8;
+            public const int GWL_STYLE = -16;
+            public const int WS_BORDER = 0x00800000;
         }
 
         #endregion
