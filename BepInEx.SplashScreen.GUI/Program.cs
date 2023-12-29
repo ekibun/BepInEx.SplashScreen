@@ -61,7 +61,9 @@ namespace BepInEx.SplashScreen
                     // Get game location and icon
                     var gameExecutable = gameProcess.MainModule.FileName;
                     _mainForm.SetGameLocation(Path.GetDirectoryName(gameExecutable));
-                    _mainForm.SetIcon(IconManager.GetLargeIcon(gameExecutable, true, true).ToBitmap());
+                    var icon = IconManager.GetLargeIcon(gameExecutable, true, true);
+                    _mainForm.Icon = icon;
+                    _mainForm.SetIcon(icon.ToBitmap());
 
                     BeginSnapPositionToGameWindow(gameProcess);
 
@@ -277,20 +279,22 @@ namespace BepInEx.SplashScreen
                     if (default(NativeMethods.RECT).Equals(rct))
                         continue;
 
-                    var x = rct.Left + (rct.Right - rct.Left) / 2 - _mainForm.Width / 2;
-                    var y = rct.Top + (rct.Bottom - rct.Top) / 2 - _mainForm.Height / 2;
-                    var newLocation = new Point(x, y);
-
-                    if (_mainForm.Location != newLocation)
-                        _mainForm.Location = newLocation;
-
                     if (_mainForm.FormBorderStyle != FormBorderStyle.None)
                     {
                         // At this point the form is snapped to the main game window so prevent user from trying to drag it
                         _mainForm.FormBorderStyle = FormBorderStyle.None;
                         //_mainForm.BackColor = Color.White;
                         _mainForm.PerformLayout();
+                        NativeMethods.SetParent(_mainForm.Handle, gameProcess.MainWindowHandle);
                     }
+                    _mainForm.Invalidate();
+
+                    var x = (rct.Right - rct.Left) / 2 - _mainForm.Width / 2;
+                    var y = (rct.Bottom - rct.Top) / 2 - _mainForm.Height / 2;
+                    var newLocation = new Point(x, y);
+
+                    if (_mainForm.Location != newLocation)
+                        _mainForm.Location = newLocation;
                 }
             }
             catch (Exception)
@@ -306,6 +310,10 @@ namespace BepInEx.SplashScreen
 
         private static class NativeMethods
         {
+
+            [DllImport("user32.dll")]
+            public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
             [DllImport("user32.dll")]
             [return: MarshalAs(UnmanagedType.Bool)]
             public static extern bool GetWindowRect(HandleRef hWnd, out RECT lpRect);
