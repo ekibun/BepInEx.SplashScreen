@@ -69,7 +69,6 @@ namespace BepInEx.SplashScreen
             // button1
             // 
             this.button1.Dock = System.Windows.Forms.DockStyle.Top;
-            this.button1.FlatStyle = System.Windows.Forms.FlatStyle.Popup;
             this.button1.Location = new System.Drawing.Point(8, 444);
             this.button1.Name = "button1";
             this.button1.Size = new System.Drawing.Size(282, 34);

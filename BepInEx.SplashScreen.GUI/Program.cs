@@ -16,8 +16,6 @@ namespace BepInEx.SplashScreen
     {
         private static SplashScreen _mainForm;
 
-        private static readonly System.Timers.Timer _AliveTimer = new System.Timers.Timer(15000);
-
         /// <summary>
         /// The main entry point for the application.
         /// </summary>
@@ -62,26 +60,11 @@ namespace BepInEx.SplashScreen
                     // Get game location and icon
                     var gameExecutable = gameProcess.MainModule.FileName;
                     _mainForm.SetGameLocation(Path.GetDirectoryName(gameExecutable));
-                    _mainForm.SetIcon(IconManager.GetLargeIcon(gameExecutable, true, true).ToBitmap());
+                    var icon = IconManager.GetLargeIcon(gameExecutable, true, true);
+                    _mainForm.Icon = icon;
+                    _mainForm.SetIcon(icon.ToBitmap());
 
                     BeginSnapPositionToGameWindow(gameProcess);
-
-                    // If log messages stop coming, preloader/chainloader has crashed or is stuck
-                    _AliveTimer.AutoReset = false;
-                    _AliveTimer.Elapsed += (_, __) =>
-                    {
-                        try
-                        {
-                            Log("Stopped receiving log messages from the game, assuming preloader/chainloader has crashed or is stuck", true);
-                        }
-                        catch (Exception e)
-                        {
-                            // ¯\_(ツ)_/¯
-                            Debug.Fail(e.ToString());
-                        }
-                        Environment.Exit(3);
-                    };
-                    _AliveTimer.Start();
                 }
                 catch (Exception e)
                 {
@@ -127,10 +110,6 @@ namespace BepInEx.SplashScreen
                 {
                     while (inStream.CanRead && !gameProcess.HasExited)
                     {
-                        // Still receiving log messages, so preloader/chainloader is still alive and loading
-                        _AliveTimer.Stop();
-                        _AliveTimer.Start();
-
                         ProcessInputMessage(inReader.ReadLine());
                     }
                 }
@@ -274,21 +253,9 @@ namespace BepInEx.SplashScreen
                     if (!NativeMethods.GetWindowRect(new HandleRef(_mainForm, gameProcess.MainWindowHandle), out var rct))
                         throw new InvalidOperationException("GetWindowRect failed :(");
 
-                    var foregroundWindow = NativeMethods.GetForegroundWindow();
-                    // The main game window is not responding most of the time, which prevents it from being recognized as the foreground window
-                    // To work around this, check if the currently focused window is the splash window, as it will most likely be the last focused window after user clicks on the game window
-                    _mainForm.TopMost = gameProcess.MainWindowHandle == foregroundWindow || _mainForm.Handle == foregroundWindow;
-
                     // Just in case, don't want to mangle the splash
                     if (default(NativeMethods.RECT).Equals(rct))
                         continue;
-
-                    var x = rct.Left + (rct.Right - rct.Left) / 2 - _mainForm.Width / 2;
-                    var y = rct.Top + (rct.Bottom - rct.Top) / 2 - _mainForm.Height / 2;
-                    var newLocation = new Point(x, y);
-
-                    if (_mainForm.Location != newLocation)
-                        _mainForm.Location = newLocation;
 
                     if (_mainForm.FormBorderStyle != FormBorderStyle.None)
                     {
@@ -296,7 +263,27 @@ namespace BepInEx.SplashScreen
                         _mainForm.FormBorderStyle = FormBorderStyle.None;
                         //_mainForm.BackColor = Color.White;
                         _mainForm.PerformLayout();
+
+                        // Check for fullscreen
+                        long style = NativeMethods.GetWindowLong(gameProcess.MainWindowHandle, NativeMethods.GWL_STYLE);
+                        bool hasBorder = (style & NativeMethods.WS_BORDER) != 0;
+                        if (hasBorder)
+                        {
+                            NativeMethods.SetParent(_mainForm.Handle, gameProcess.MainWindowHandle);
+                        }
+                        else
+                        {
+                            NativeMethods.SetWindowLong(_mainForm.Handle, NativeMethods.GWL_HWNDPARENT, gameProcess.MainWindowHandle);
+                        }
+                        _mainForm.Invalidate(true);
                     }
+
+                    var x = (rct.Right - rct.Left) / 2 - _mainForm.Width / 2;
+                    var y = (rct.Bottom - rct.Top) / 2 - _mainForm.Height / 2;
+                    var newLocation = new Point(x, y);
+
+                    if (_mainForm.Location != newLocation)
+                        _mainForm.Location = newLocation;
                 }
             }
             catch (Exception)
@@ -313,6 +300,15 @@ namespace BepInEx.SplashScreen
         private static class NativeMethods
         {
             [DllImport("user32.dll")]
+            public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+            [DllImport("user32.dll")]
+            public static extern long GetWindowLong(IntPtr hWnd, int nIndex);
+
+            [DllImport("user32.dll")]
+            public static extern int SetWindowLong(IntPtr hWnd, int nIndex, IntPtr dwNewLong);
+
+            [DllImport("user32.dll")]
             [return: MarshalAs(UnmanagedType.Bool)]
             public static extern bool GetWindowRect(HandleRef hWnd, out RECT lpRect);
 
@@ -325,8 +321,9 @@ namespace BepInEx.SplashScreen
                 public int Bottom;      // y position of lower-right corner
             }
 
-            [DllImport("user32.dll", CharSet = CharSet.Auto, ExactSpelling = true)]
-            public static extern IntPtr GetForegroundWindow();
+            public const int GWL_HWNDPARENT = -8;
+            public const int GWL_STYLE = -16;
+            public const int WS_BORDER = 0x00800000;
         }
 
         #endregion
