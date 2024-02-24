@@ -41,11 +41,14 @@ namespace BepInEx.SplashScreen
                     return;
                 }
 
-                _mainForm = new SplashScreen();
-                _mainForm.Show();
-
-                var pid = int.Parse(args.Last());
+                IntPtr hwndgame = new IntPtr(long.Parse(args.Last()));
+                NativeMethods.GetWindowThreadProcessId(hwndgame, out var pid);
                 var gameProcess = Process.GetProcessById(pid);
+
+
+                _mainForm = new SplashScreen();
+                NativeMethods.SetParent(_mainForm.Handle, hwndgame);
+                _mainForm.Show();
 
                 BeginReadingInput(gameProcess);
 
@@ -64,7 +67,7 @@ namespace BepInEx.SplashScreen
                     _mainForm.Icon = icon;
                     _mainForm.SetIcon(icon.ToBitmap());
 
-                    BeginSnapPositionToGameWindow(gameProcess);
+                    BeginSnapPositionToGameWindow(hwndgame);
                 }
                 catch (Exception e)
                 {
@@ -207,83 +210,28 @@ namespace BepInEx.SplashScreen
 
         #region Window poisition snap
 
-        private static void BeginSnapPositionToGameWindow(Process gameProcess)
+        private static void BeginSnapPositionToGameWindow(IntPtr gameProcess)
         {
             new Thread(SnapPositionToGameWindowThread) { IsBackground = true }.Start(gameProcess);
         }
-        private static void SnapPositionToGameWindowThread(object processArg)
+        private static void SnapPositionToGameWindowThread(object hwndArg)
         {
             try
             {
-                var temporarilyHidden = false;
-                var gameProcess = (Process)processArg;
+                var gamehwnd = (IntPtr)hwndArg;
                 while (!_mainForm.IsDisposed)
                 {
                     Thread.Sleep(100);
 
-                    if (!_mainForm.Visible && !temporarilyHidden)
-                        continue;
-
-                    if (gameProcess.MainWindowHandle == IntPtr.Zero ||
-                        // Ignore console window
-                        gameProcess.MainWindowTitle.StartsWith("BepInEx") ||
-                        gameProcess.MainWindowTitle.StartsWith("Select BepInEx"))
-                    {
-                        // Need to refresh the process if the window handle is not yet valid or it will keep grabbing the old one
-                        gameProcess.Refresh();
-                        continue;
-                    }
-
-                    // Detect Unity's pre-launch resoultion and hotkey configuration window and hide the splash until it is closed
-                    // It seems like it's not possible to localize this window so the title check should be fine? Hopefully?
-                    if (gameProcess.MainWindowTitle.EndsWith(" Configuration"))
-                    {
-                        _mainForm.Visible = false;
-                        temporarilyHidden = true;
-                        gameProcess.Refresh();
-                        continue;
-                    }
-
-                    if (temporarilyHidden)
-                    {
-                        temporarilyHidden = false;
-                        _mainForm.Visible = true;
-                    }
-
-                    if (!NativeMethods.GetWindowRect(new HandleRef(_mainForm, gameProcess.MainWindowHandle), out var rct))
+                    if (!NativeMethods.GetClientRect(gamehwnd, out var rct))
                         throw new InvalidOperationException("GetWindowRect failed :(");
 
                     // Just in case, don't want to mangle the splash
                     if (default(NativeMethods.RECT).Equals(rct))
                         continue;
 
-                    if (_mainForm.FormBorderStyle != FormBorderStyle.None)
-                    {
-                        // At this point the form is snapped to the main game window so prevent user from trying to drag it
-                        _mainForm.FormBorderStyle = FormBorderStyle.None;
-                        //_mainForm.BackColor = Color.White;
-                        _mainForm.PerformLayout();
-
-                        // Check for fullscreen
-                        long style = NativeMethods.GetWindowLong(gameProcess.MainWindowHandle, NativeMethods.GWL_STYLE);
-                        bool hasBorder = (style & NativeMethods.WS_BORDER) != 0;
-                        if (hasBorder)
-                        {
-                            NativeMethods.SetParent(_mainForm.Handle, gameProcess.MainWindowHandle);
-                        }
-                        else
-                        {
-                            NativeMethods.SetWindowLong(_mainForm.Handle, NativeMethods.GWL_HWNDPARENT, gameProcess.MainWindowHandle);
-                        }
-                        _mainForm.Invalidate(true);
-                    }
-
-                    var x = (rct.Right - rct.Left) / 2 - _mainForm.Width / 2;
-                    var y = (rct.Bottom - rct.Top) / 2 - _mainForm.Height / 2;
-                    var newLocation = new Point(x, y);
-
-                    if (_mainForm.Location != newLocation)
-                        _mainForm.Location = newLocation;
+                    _mainForm.Location = new Point(0, 0);
+                    _mainForm.Size = new Size(rct.Right - rct.Left, rct.Bottom - rct.Top);
                 }
             }
             catch (Exception)
@@ -310,7 +258,7 @@ namespace BepInEx.SplashScreen
 
             [DllImport("user32.dll")]
             [return: MarshalAs(UnmanagedType.Bool)]
-            public static extern bool GetWindowRect(HandleRef hWnd, out RECT lpRect);
+            public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
 
             [StructLayout(LayoutKind.Sequential)]
             public struct RECT
@@ -324,6 +272,9 @@ namespace BepInEx.SplashScreen
             public const int GWL_HWNDPARENT = -8;
             public const int GWL_STYLE = -16;
             public const int WS_BORDER = 0x00800000;
+
+            [DllImport("user32.dll")]
+            public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);
         }
 
         #endregion

@@ -3,6 +3,7 @@ using System;
 using System.Collections;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using BepInEx.Configuration;
@@ -47,25 +48,8 @@ namespace BepInEx.SplashScreen
                     }
                 }
 
-                var guiExecutablePath = Path.Combine(Path.GetDirectoryName(typeof(SplashScreenController).Assembly.Location) ?? Paths.PatcherPluginPath, "BepInEx.SplashScreen.GUI.exe");
-
-                if (!File.Exists(guiExecutablePath))
-                    throw new FileNotFoundException("Executable not found or inaccessible at " + guiExecutablePath);
-
-                Logger.Log(LogLevel.Debug, "Starting GUI process: " + guiExecutablePath);
-
-                var psi = new ProcessStartInfo(guiExecutablePath, Process.GetCurrentProcess().Id.ToString())
-                {
-                    UseShellExecute = false,
-                    RedirectStandardInput = true,
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    StandardOutputEncoding = Encoding.UTF8,
-                    StandardErrorEncoding = Encoding.UTF8,
-                };
-                _guiProcess = Process.Start(psi);
-
-                new Thread(CommunicationThread) { IsBackground = true }.Start(_guiProcess);
+                NativeMethods.SetWinEventHook(NativeMethods.EVENT_OBJECT_CREATE, NativeMethods.EVENT_OBJECT_CREATE, IntPtr.Zero,
+                        hookCallback, 0, 0, 0);
 
                 _logListener = LoadingLogListener.StartListening();
             }
@@ -74,6 +58,89 @@ namespace BepInEx.SplashScreen
                 Logger.LogError("Failed to start GUI: " + e);
                 KillSplash();
             }
+        }
+
+        static IntPtr _gameWindow = IntPtr.Zero;
+        static IntPtr _splashWindow = IntPtr.Zero;
+
+        static NativeMethods.WinEventDelegate hookCallback = (IntPtr hWinEventHook, uint eventType,
+                    IntPtr hWnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime) =>
+        {
+            NativeMethods.GetWindowThreadProcessId(hWnd, out var windowProcessId);
+
+            if (windowProcessId == Process.GetCurrentProcess().Id)
+            {
+                StringBuilder className = new StringBuilder(256);
+                NativeMethods.GetClassName(hWnd, className, className.Capacity);
+
+                if (className.ToString() == "UnityWndClass")
+                {
+                    Logger.LogDebug("UnityWndClass Window created");
+                    NativeMethods.SetWindowPos(hWnd, IntPtr.Zero, 0, 0, 1280, 720, NativeMethods.SWP_NOMOVE);
+                    NativeMethods.ShowWindow(hWnd, NativeMethods.SW_RESTORE);
+
+                    _gameWindow = hWnd;
+
+                    var guiExecutablePath = Path.Combine(Path.GetDirectoryName(typeof(SplashScreenController).Assembly.Location) ?? Paths.PatcherPluginPath, "BepInEx.SplashScreen.GUI.exe");
+
+                    if (!File.Exists(guiExecutablePath))
+                        throw new FileNotFoundException("Executable not found or inaccessible at " + guiExecutablePath);
+
+                    Logger.Log(LogLevel.Debug, "Starting GUI process: " + guiExecutablePath);
+
+                    var psi = new ProcessStartInfo(guiExecutablePath, hWnd.ToString())
+                    {
+                        UseShellExecute = false,
+                        RedirectStandardInput = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        StandardOutputEncoding = Encoding.UTF8,
+                        StandardErrorEncoding = Encoding.UTF8,
+                    };
+                    _guiProcess = Process.Start(psi);
+
+                    new Thread(CommunicationThread) { IsBackground = true }.Start(_guiProcess);
+
+                    NativeMethods.UnhookWinEvent(hWinEventHook);
+                }
+            }
+        };
+
+        private static class NativeMethods
+        {
+            [DllImport("user32.dll", SetLastError = true)]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+            public const uint SWP_NOSIZE = 0x0001;
+            public const uint SWP_NOMOVE = 0x0002;
+
+            [DllImport("user32.dll")]
+            public static extern IntPtr SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+            public const uint EVENT_OBJECT_CREATE = 0x8000;
+
+            public delegate void WinEventDelegate(IntPtr hWinEventHook, uint eventType,
+                IntPtr hwnd, int idObject, int idChild, uint dwEventThread, uint dwmsEventTime);
+
+            [DllImport("user32.dll")]
+            public static extern IntPtr SetWinEventHook(uint eventMin, uint eventMax, IntPtr hmodWinEventProc,
+                WinEventDelegate lpfnWinEventProc, uint idProcess, uint idThread, uint dwFlags);
+
+            [DllImport("user32.dll")]
+            [return: MarshalAs(UnmanagedType.Bool)]
+            public static extern bool UnhookWinEvent(IntPtr hWinEventHook);
+
+            [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+            public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+            [DllImport("user32.dll")]
+            public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+            [DllImport("user32.dll")]
+            public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+            public const int SW_RESTORE = 9;
         }
 
         internal static void SendMessage(string message)
